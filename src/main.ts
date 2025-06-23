@@ -20,7 +20,7 @@ async function bootstrap() {
 
   const corsOptions: FastifyCorsOptions = {
     origin: [
-      'https://xo.xuton.uno',
+      'https://igra.top',
       'http://0.0.0.0:3000',
       'http://localhost:3000',
       'http://127.0.0.1:3000',
