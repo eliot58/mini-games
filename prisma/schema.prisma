@@ -11,44 +11,54 @@ datasource db {
 model User {
   tgId         String    @id
   balance      Int       @default(0)
-  totalGames   Int       @default(0)
-  totalWins    Int       @default(0)
   username     String
   photo_url    String
 
   current_game String?   @db.Uuid
   createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+
+  createdGames Game[]    @relation("UserCreatedGames")
+  joinedGames  Game[]    @relation("UserJoinedGames")
 
   @@map("users")
 }
 
 model Game {
-  id            String      @id @default(uuid()) @db.Uuid
-  status        GameStatus  @default(waiting)
-  currentPlayer String      @default("cross")
-  winLineStart  Json?
-  winLineEnd    Json?
-  winDirection  String?
-  squares       Square[]
+  id             String      @id @default(uuid()) @db.Uuid
 
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
+  status         GameStatus  @default(waiting)
+  createdAt      DateTime    @default(now())
+  startedAt      DateTime?
+  endedAt        DateTime?
+
+  gameType       GameType
+
+  winLines       Int? 
+
+  winReason      WinReason?
+  creatorId      String
+  joinerId       String?
+
+  creator        User        @relation("UserCreatedGames", fields: [creatorId], references: [tgId], onDelete: Cascade)
+  joiner         User?       @relation("UserJoinedGames", fields: [joinerId], references: [tgId], onDelete: Cascade)
+
+  @@map("games")
 }
 
-model Square {
-  id        String   @id @default(uuid()) @db.Uuid
-  x         Int
-  y         Int
-  figure    String?
-  gameId    String   @db.Uuid
-  game      Game     @relation(fields: [gameId], references: [id])
-
-  @@unique([x, y, gameId])
+enum GameType {
+  dot
+  blot
+  xo
 }
 
 enum GameStatus {
   waiting
   started
   finished
+}
+
+enum WinReason {
+  timeout
+  opponent_left
+  fair_win
 }
