@@ -40,7 +40,7 @@ export class GameController {
             thumbnail_width: 300,
             thumbnail_height: 300,
             input_message_content: {
-                message_text: `Invitation to the game \n \n ${user.username} offers a game of Tac Tic`
+                message_text: `Invitation to the game \n \n ${user.username}`
             },
             reply_markup: {
                 inline_keyboard: [[{ text: "Play Tac Tic", url: `https://t.me/TacTicToe_bot?startapp=lobby_${user.current_game}__ref=${userId}` }]]

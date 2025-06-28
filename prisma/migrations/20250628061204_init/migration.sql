@@ -10,7 +10,7 @@ CREATE TYPE "WinReason" AS ENUM ('timeout', 'opponent_left', 'fair_win');
 -- CreateTable
 CREATE TABLE "users" (
     "tgId" TEXT NOT NULL,
-    "balance" INTEGER NOT NULL DEFAULT 0,
+    "balance" INTEGER NOT NULL DEFAULT 70,
     "username" TEXT NOT NULL,
     "photo_url" TEXT NOT NULL,
     "current_game" UUID,
@@ -28,9 +28,11 @@ CREATE TABLE "games" (
     "endedAt" TIMESTAMP(3),
     "gameType" "GameType" NOT NULL,
     "winLines" INTEGER,
+    "size" INTEGER,
     "winReason" "WinReason",
     "creatorId" TEXT NOT NULL,
     "joinerId" TEXT,
+    "isJoinerFirstTime" BOOLEAN NOT NULL DEFAULT false,
 
     CONSTRAINT "games_pkey" PRIMARY KEY ("id")
 );
