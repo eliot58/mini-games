@@ -1,4 +1,4 @@
-import { Controller, Get, NotFoundException, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Controller, Get, InternalServerErrorException, NotFoundException, Query, Req, UseGuards } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { RequestWithAuth } from '../auth/auth.types';
 import { ConfigService } from '@nestjs/config';
@@ -14,6 +14,52 @@ export class GameController {
         private readonly httpService: HttpService,
         private readonly configService: ConfigService
     ) { }
+
+    public async createInvoiceLink({
+        title,
+        description,
+        payload,
+        photo_url,
+        currency,
+        prices,
+    }: {
+        title: string;
+        description: string;
+        payload: string;
+        photo_url: string;
+        currency: string;
+        prices: { label: string; amount: number }[];
+    }): Promise<string> {
+        const botToken = this.configService.get<string>('BOT_TOKEN');
+        const apiUrl = `https://api.telegram.org/bot${botToken}/createInvoiceLink`;
+
+        try {
+            const response = await firstValueFrom(
+                this.httpService.get(apiUrl, {
+                    params: {
+                        title,
+                        description,
+                        payload,
+                        photo_url,
+                        currency,
+                        prices: JSON.stringify(prices),
+                    },
+                }),
+            );
+
+            if (response.data?.ok) {
+                return response.data.result;
+            } else {
+                throw new BadRequestException(
+                    `Oops! Something went wrong on our end. Please try again later: ${response.data?.description || 'Unknown error'}`,
+                );
+            }
+        } catch (error) {
+            throw new InternalServerErrorException(
+                `Oops! Something went wrong on our end. Please try again later: ${error.message || error}`,
+            );
+        }
+    }
 
     @Get('getShareMessage')
     @UseGuards(AuthGuard)
@@ -89,5 +135,19 @@ export class GameController {
         } catch (error) {
             return { error: error.message };
         }
+    }
+
+    @Get('getInvoiceLink')
+    async refillEnergy(@Query('amount') amount: number) {
+        const prices = [{ label: 'XTR', amount }];
+
+        return this.createInvoiceLink({
+            title: 'Buy stars',
+            description: 'Buy stars',
+            photo_url: 'https://cdn.notwise.co/energyRefill.jpg',
+            payload: '',
+            currency: 'XTR',
+            prices,
+        });
     }
 }
