@@ -34,7 +34,8 @@ model Game {
   gameType           GameType
 
   winLines           Int?
-  size               Int?
+  dot_size           Int?
+  blot_size          BlotSize?
 
   winReason          WinReason?
   creatorId          String
@@ -63,4 +64,10 @@ enum WinReason {
   timeout
   opponent_left
   fair_win
+}
+
+enum BlotSize {
+  small
+  medium
+  big
 }

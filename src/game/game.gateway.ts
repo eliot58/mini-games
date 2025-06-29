@@ -30,7 +30,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   async handleCreateGame(
     @ConnectedSocket() client: SocketWithAuth,
     @MessageBody()
-    data: { gameType: 'dot' | 'blot' | 'xo'; winLines?: number; size?: number },
+    data: { gameType: 'dot' | 'blot' | 'xo'; winLines?: number; dot_size?: number, blot_size?: 'small' | 'medium' | 'big' },
   ) {
     try {
       const user = await this.prisma.user.findUnique({ where: { tgId: client.tgId } })
@@ -41,7 +41,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         return client.emit('error', { message: 'Not enough balance' });
       }
 
-      const { gameType, winLines, size } = data;
+      const { gameType, winLines, dot_size, blot_size } = data;
 
       if (!['dot', 'blot', 'xo'].includes(gameType)) {
         return client.emit('error', { message: 'Invalid gameType' });
@@ -56,18 +56,18 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       }
 
       if (gameType === 'dot') {
-        if (!size || size < 100 || size > 200) {
+        if (!dot_size || dot_size < 100 || dot_size > 200) {
           return client.emit('error', {
-            message: 'Invalid size for dot. Must be between 100 and 200.',
+            message: 'Invalid dot_size for dot. Must be between 100 and 200.',
           });
         }
       }
 
       if (gameType === 'blot') {
-        const allowedSizes = [300, 500, 900];
-        if (!size || !allowedSizes.includes(size)) {
+        const allowedSizes = ['small', 'medium', 'big'];
+        if (!blot_size || !allowedSizes.includes(blot_size)) {
           return client.emit('error', {
-            message: 'Invalid size for blot. Must be 300, 500, or 900.',
+            message: 'Invalid blot_size for blot. Must be small, medium, or big.',
           });
         }
       }
@@ -76,7 +76,8 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         data: {
           gameType,
           winLines: gameType === 'xo' ? winLines : null,
-          size: gameType === 'dot' || gameType === 'blot' ? size : null,
+          dot_size: gameType === 'dot' ? dot_size : null,
+          blot_size: gameType === 'blot' ? blot_size : null,
           creatorId: client.tgId,
         },
       });

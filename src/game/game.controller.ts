@@ -31,6 +31,36 @@ export class GameController {
         const game = await this.prisma.game.findUnique({ where: { id: user.current_game }})
 
         if (!game) throw new NotFoundException("Game not found")
+
+        let message_text = ""
+
+        if (game.gameType === "xo") {
+            if (game.winLines === 5) {
+                message_text = `
+                    XO X5:\n
+                    ${user.username} invites you to join the endless game of Tic-tac-toe.\n
+                    Winning condition: five in a row.
+                `
+            } else {
+                message_text = `
+                    XO X6:\n
+                    ${user.username} invites you to join the endless game of Tic-tac-toe.\n
+                    Winning condition: six in a row.
+                `
+            }
+        } else if (game.gameType === "dot") {
+            message_text = `
+                Dot:\n
+                ${user.username} invites you to join the endless game of Dot.\n
+                Field size: ${game.dot_size}x${game.dot_size}
+            `
+        } else {
+            message_text = `
+                Blot:
+                ${user.username} invites you to join the endless game of Blot.
+                Field size: ${game.blot_size}
+            `
+        }
         
         const result = JSON.stringify({
             type: "article",
@@ -40,10 +70,10 @@ export class GameController {
             thumbnail_width: 300,
             thumbnail_height: 300,
             input_message_content: {
-                message_text: `Invitation to the game \n \n ${user.username}`
+                message_text
             },
             reply_markup: {
-                inline_keyboard: [[{ text: "Play Tac Tic", url: `https://t.me/TacTicToe_bot?startapp=lobby_${user.current_game}__ref=${userId}` }]]
+                inline_keyboard: [[{ text: "To the fight", url: `https://t.me/TacTicToe_bot?startapp=lobby_${user.current_game}__ref=${userId}` }]]
             }
         });
         

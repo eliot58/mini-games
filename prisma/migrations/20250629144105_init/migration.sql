@@ -7,6 +7,9 @@ CREATE TYPE "GameStatus" AS ENUM ('waiting', 'started', 'finished');
 -- CreateEnum
 CREATE TYPE "WinReason" AS ENUM ('timeout', 'opponent_left', 'fair_win');
 
+-- CreateEnum
+CREATE TYPE "BlotSize" AS ENUM ('small', 'medium', 'big');
+
 -- CreateTable
 CREATE TABLE "users" (
     "tgId" TEXT NOT NULL,
@@ -28,7 +31,8 @@ CREATE TABLE "games" (
     "endedAt" TIMESTAMP(3),
     "gameType" "GameType" NOT NULL,
     "winLines" INTEGER,
-    "size" INTEGER,
+    "dot_size" INTEGER,
+    "blot_size" "BlotSize",
     "winReason" "WinReason",
     "creatorId" TEXT NOT NULL,
     "joinerId" TEXT,
