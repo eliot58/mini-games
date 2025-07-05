@@ -13,11 +13,11 @@ import { ConfigModule } from '@nestjs/config';
     ConfigModule.forRoot({
       isGlobal: true,
     }),
-    AuthModule, 
-    GameModule, 
-    PrismaModule, 
-    UserModule, 
-    RedisModule
+    AuthModule,
+    GameModule,
+    PrismaModule,
+    UserModule,
+    RedisModule,
   ],
   providers: [
     {

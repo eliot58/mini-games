@@ -5,11 +5,11 @@ import { AuthGuard } from '../auth/auth.guard';
 
 @Controller('user')
 export class UserController {
-    constructor(private readonly userService: UserService) { }
+  constructor(private readonly userService: UserService) {}
 
-    @Get()
-    @UseGuards(AuthGuard)
-    async getUser(@Req() req: RequestWithAuth) {
-        return this.userService.getUser(req);
-    }
+  @Get()
+  @UseGuards(AuthGuard)
+  async getUser(@Req() req: RequestWithAuth) {
+    return this.userService.getUser(req);
+  }
 }

@@ -1,5 +1,13 @@
 import { Logger, UseGuards } from '@nestjs/common';
-import { ConnectedSocket, MessageBody, OnGatewayConnection, OnGatewayDisconnect, SubscribeMessage, WebSocketGateway, WebSocketServer } from '@nestjs/websockets';
+import {
+  ConnectedSocket,
+  MessageBody,
+  OnGatewayConnection,
+  OnGatewayDisconnect,
+  SubscribeMessage,
+  WebSocketGateway,
+  WebSocketServer,
+} from '@nestjs/websockets';
 import { Server } from 'socket.io';
 import { SocketWithAuth } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
@@ -12,8 +20,8 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly redis: RedisService
-  ) { }
+    private readonly redis: RedisService,
+  ) {}
 
   private readonly logger = new Logger(GameGateway.name);
 
@@ -30,10 +38,17 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   async handleCreateGame(
     @ConnectedSocket() client: SocketWithAuth,
     @MessageBody()
-    data: { gameType: 'dot' | 'blot' | 'xo'; winLines?: number; dot_size?: number, blot_size?: 'small' | 'medium' | 'big' },
+    data: {
+      gameType: 'dot' | 'blot' | 'xo';
+      winLines?: number;
+      dot_size?: number;
+      blot_size?: 'small' | 'medium' | 'big';
+    },
   ) {
     try {
-      const user = await this.prisma.user.findUnique({ where: { tgId: client.tgId } })
+      const user = await this.prisma.user.findUnique({
+        where: { tgId: client.tgId },
+      });
 
       if (!user) return client.emit('error', { message: 'User not found' });
 
@@ -67,7 +82,8 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         const allowedSizes = ['small', 'medium', 'big'];
         if (!blot_size || !allowedSizes.includes(blot_size)) {
           return client.emit('error', {
-            message: 'Invalid blot_size for blot. Must be small, medium, or big.',
+            message:
+              'Invalid blot_size for blot. Must be small, medium, or big.',
           });
         }
       }
@@ -85,9 +101,9 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       await this.prisma.user.update({
         where: { tgId: client.tgId },
         data: {
-          current_game: newGame.id
-        }
-      })
+          current_game: newGame.id,
+        },
+      });
 
       client.emit('gameCreated', newGame);
     } catch (err) {
@@ -120,7 +136,9 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       }
 
       if (game.creatorId === client.tgId) {
-        return client.emit('error', { message: 'You cannot join your own game' });
+        return client.emit('error', {
+          message: 'You cannot join your own game',
+        });
       }
 
       let isFirstTime = false;
@@ -169,29 +187,31 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
-
   @UseGuards(WsAuthGuard)
   @SubscribeMessage('makeMove')
   async handleMakeMove(
     @ConnectedSocket() client: SocketWithAuth,
-    @MessageBody() data: { gameId: string; x: number; y: number }
+    @MessageBody() data: { gameId: string; x: number; y: number },
   ) {
     const { gameId, x, y } = data;
     const playerId = client.tgId;
 
     const game = await this.prisma.game.findUnique({ where: { id: gameId } });
-    if (!game || game.status !== 'started') return client.emit('error', { message: 'Invalid game' });
+    if (!game || game.status !== 'started')
+      return client.emit('error', { message: 'Invalid game' });
 
     const isPlayer = [game.creatorId, game.joinerId].includes(playerId);
-    if (!isPlayer) return client.emit('error', { message: 'You are not a player' });
+    if (!isPlayer)
+      return client.emit('error', { message: 'You are not a player' });
 
     const currentTurn = await this.redis.getKey(`game:${gameId}:turn`);
-    if (currentTurn !== playerId) return client.emit('error', { message: 'Not your turn' });
+    if (currentTurn !== playerId)
+      return client.emit('error', { message: 'Not your turn' });
 
     const rawMoves = await this.redis.getKey(`game:${gameId}:board`);
     const moves = rawMoves ? JSON.parse(rawMoves) : [];
 
-    if (moves.some(m => m.x === x && m.y === y)) {
+    if (moves.some((m) => m.x === x && m.y === y)) {
       return client.emit('error', { message: 'Cell is already taken' });
     }
 
@@ -204,7 +224,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     if (won) {
       await this.redis.deleteKey(`game:${gameId}:board`);
-      await this.redis.deleteKey(`game:${gameId}:turn`)
+      await this.redis.deleteKey(`game:${gameId}:turn`);
 
       await this.prisma.game.update({
         where: { id: gameId },
@@ -212,7 +232,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           status: 'finished',
           endedAt: new Date(),
           winReason: 'fair_win',
-        }
+        },
       });
 
       this.server.to(game.creatorId).emit('gameEnded', { winner: playerId });
@@ -220,14 +240,19 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return;
     }
 
-    const nextTurn = playerId === game.creatorId ? game.joinerId : game.creatorId;
+    const nextTurn =
+      playerId === game.creatorId ? game.joinerId : game.creatorId;
     await this.redis.setKey(`game:${gameId}:turn`, nextTurn!);
 
     this.server.to(game.creatorId).emit('moveMade', newMove);
     this.server.to(game.joinerId!).emit('moveMade', newMove);
   }
 
-  private checkWin(moves: { x: number; y: number; playerId: string }[], playerId: string, winLines: number) {
+  private checkWin(
+    moves: { x: number; y: number; playerId: string }[],
+    playerId: string,
+    winLines: number,
+  ) {
     const board = new Map<string, boolean>();
 
     for (const move of moves) {
@@ -240,10 +265,10 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       [1, 0],
       [0, 1],
       [1, 1],
-      [1, -1]
+      [1, -1],
     ];
 
-    for (const { x, y } of moves.filter(m => m.playerId === playerId)) {
+    for (const { x, y } of moves.filter((m) => m.playerId === playerId)) {
       for (const [dx, dy] of directions) {
         let count = 1;
         for (let step = 1; step < winLines; step++) {
