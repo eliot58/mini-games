@@ -158,7 +158,7 @@ export class GameController {
   }
 
   @Get('getInvoiceLink')
-  async refillEnergy(@Query('amount') amount: number) {
+  async getInvoiceLink(@Query('amount') amount: number) {
     const prices = [{ label: 'XTR', amount }];
 
     return this.createInvoiceLink({

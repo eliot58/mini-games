@@ -7,6 +7,7 @@ import { AppModule } from './app.module';
 import { FastifyCorsOptions } from '@fastify/cors';
 import { ValidationPipe } from '@nestjs/common';
 import './instrument';
+import './instrument';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestFastifyApplication>(
