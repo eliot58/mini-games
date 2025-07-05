@@ -39,7 +39,7 @@ export class AuthGuard implements CanActivate {
 
     private extractInitDataFromHeader(request: RequestWithAuth): string | null {
         const authHeader = request.headers.authorization;
-        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        if (!authHeader || !authHeader.startsWith('initData ')) {
             return null;
         }
         return authHeader.split(' ')[1];

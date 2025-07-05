@@ -36,6 +36,7 @@ CREATE TABLE "games" (
     "winReason" "WinReason",
     "creatorId" TEXT NOT NULL,
     "joinerId" TEXT,
+    "winnerId" TEXT,
     "isJoinerFirstTime" BOOLEAN NOT NULL DEFAULT false,
 
     CONSTRAINT "games_pkey" PRIMARY KEY ("id")

@@ -40,6 +40,8 @@ model Game {
   winReason          WinReason?
   creatorId          String
   joinerId           String?
+
+  winnerId           String?
   isJoinerFirstTime  Boolean     @default(false)
 
   creator            User        @relation("UserCreatedGames", fields: [creatorId], references: [tgId], onDelete: Cascade)

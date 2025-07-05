@@ -18,11 +18,41 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private readonly logger = new Logger(GameGateway.name);
 
   handleConnection(client: SocketWithAuth) {
-    console.log(`Client connected: ${client.id}`);
+    console.log(`Client connected: ${client.tgId}`);
   }
 
-  handleDisconnect(client: SocketWithAuth) {
-    console.log(`Client disconnected: ${client.id}`);
+  async handleDisconnect(client: SocketWithAuth) {
+    const user = await this.prisma.user.findUnique({ where: { tgId: client.tgId } })
+
+    if (!user) return client.emit('error', { message: 'User not found' });
+
+    if (user.current_game) {
+      const game = await this.prisma.game.findUnique({ where: { id: user.current_game } })
+
+      if (!game) return client.emit('error', { message: 'Game not found' });
+
+      if (game.status === 'started') {
+        const opponentId = game.creatorId === user.tgId ? game.joinerId : game.creatorId;
+
+        await this.prisma.game.update({
+          where: { id: game.id },
+          data: {
+            status: 'finished',
+            endedAt: new Date(),
+            winReason: 'opponent_left',
+            winnerId: opponentId!,
+          },
+        });
+
+        await this.prisma.user.updateMany({
+          where: { tgId: { in: [game.creatorId, game.joinerId!].filter(Boolean) } },
+          data: { current_game: null },
+        });
+
+        this.server.to(opponentId!).emit('opponentLeft', { gameId: game.id, winner: opponentId });
+
+      }
+    }
   }
 
   @UseGuards(WsAuthGuard)
@@ -212,8 +242,15 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           status: 'finished',
           endedAt: new Date(),
           winReason: 'fair_win',
+          winnerId: playerId,
         }
       });
+
+      await this.prisma.user.updateMany({
+        where: { tgId: { in: [game.creatorId, game.joinerId!] } },
+        data: { current_game: null },
+      });
+
 
       this.server.to(game.creatorId).emit('gameEnded', { winner: playerId });
       this.server.to(game.joinerId!).emit('gameEnded', { winner: playerId });
