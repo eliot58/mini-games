@@ -12,9 +12,9 @@ import { RedisModule } from '../redis/redis.module';
     HttpModule.register({
       timeout: 5000,
       maxRedirects: 5,
-    })
+    }),
   ],
   providers: [GameGateway],
-  controllers: [GameController]
+  controllers: [GameController],
 })
-export class GameModule { }
+export class GameModule {}

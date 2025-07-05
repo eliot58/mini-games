@@ -1,22 +1,27 @@
 import { NestFactory } from '@nestjs/core';
-import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
+import {
+  FastifyAdapter,
+  NestFastifyApplication,
+} from '@nestjs/platform-fastify';
 import { AppModule } from './app.module';
 import { FastifyCorsOptions } from '@fastify/cors';
 import { ValidationPipe } from '@nestjs/common';
-import "./instrument";
+import './instrument';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
     new FastifyAdapter({
-      ignoreTrailingSlash: true
+      ignoreTrailingSlash: true,
     }),
   );
 
-  app.useGlobalPipes(new ValidationPipe({
-    whitelist: true,
-    transform: true
-  }));
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      transform: true,
+    }),
+  );
 
   const corsOptions: FastifyCorsOptions = {
     origin: [
@@ -24,11 +29,11 @@ async function bootstrap() {
       'http://0.0.0.0:3000',
       'http://localhost:3000',
       'http://127.0.0.1:3000',
-      'null'
+      'null',
     ],
     credentials: true,
     methods: '*',
-    allowedHeaders: ['*', 'Authorization', 'Content-Type']
+    allowedHeaders: ['*', 'Authorization', 'Content-Type'],
   };
 
   app.enableCors(corsOptions);
