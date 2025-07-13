@@ -165,7 +165,7 @@ export class GameController {
       title: 'Buy stars',
       description: 'Buy stars',
       photo_url: 'https://cdn.notwise.co/energyRefill.jpg',
-      payload: '',
+      payload: amount.toString(),
       currency: 'XTR',
       prices,
     });
