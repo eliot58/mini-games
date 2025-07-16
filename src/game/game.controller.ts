@@ -22,7 +22,7 @@ export class GameController {
     private readonly prisma: PrismaService,
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
-  ) {}
+  ) { }
 
   public async createInvoiceLink({
     title,

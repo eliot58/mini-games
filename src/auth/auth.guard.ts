@@ -6,10 +6,9 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { RequestWithAuth, SocketWithAuth } from './auth.types';
-import { parse, validate } from './auth.utils';
-import { ExpiredError } from '../constants/auth.constants';
+import { isValid, parse } from '@telegram-apps/init-data-node';
 import { ConfigService } from '@nestjs/config';
-import { WsUnauthorizedException } from '../exceptions/ws.exceptions';
+import { WsBadRequestException, WsUnauthorizedException } from '../exceptions/ws.exceptions';
 
 @Injectable()
 export class AuthGuard implements CanActivate {
@@ -23,20 +22,18 @@ export class AuthGuard implements CanActivate {
       throw new UnauthorizedException('No init data provided');
     }
 
-    try {
-      const botToken = this.configService.get<string>('BOT_TOKEN');
-      validate(initData, botToken!, 86400);
-    } catch (error) {
-      if (error instanceof ExpiredError) {
-        throw new BadRequestException('Init data expired');
-      }
+    const botToken = this.configService.get<string>('BOT_TOKEN');
+
+    if (!isValid(initData, botToken!)) {
       throw new BadRequestException('Invalid init data');
     }
 
-    const payload = parse(initData);
-    request.tgId = payload.user.id;
-    request.username = payload.user.firstName;
-    request.photo_url = payload.user.photo_url;
+    const parsed = parse(initData);
+
+    if (!parsed.user) return false;
+    request.tgId = parsed.user.id.toString();
+    request.username = parsed.user.first_name;
+    request.photo_url = parsed.user.photo_url || '';
 
     return true;
   }
@@ -62,20 +59,18 @@ export class WsAuthGuard implements CanActivate {
       throw new WsUnauthorizedException('No init data provided');
     }
 
-    try {
-      const botToken = this.configService.get<string>('BOT_TOKEN');
-      validate(initData, botToken!, 86400);
-    } catch (error) {
-      if (error instanceof ExpiredError) {
-        throw new BadRequestException('Init data expired');
-      }
-      throw new BadRequestException('Invalid init data');
+    const botToken = this.configService.get<string>('BOT_TOKEN');
+
+    if (!isValid(initData, botToken!)) {
+      throw new WsBadRequestException('Invalid init data');
     }
 
-    const payload = parse(initData);
-    client.tgId = payload.user.id;
-    client.username = payload.user.firstName;
-    client.photo_url = payload.user.photo_url;
+    const parsed = parse(initData);
+
+    if (!parsed.user) return false;
+    client.tgId = parsed.user.id.toString();
+    client.username = parsed.user.first_name;
+    client.photo_url = parsed.user.photo_url || '';
 
     return true;
   }
