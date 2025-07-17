@@ -14,7 +14,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { WsAuthGuard } from '../auth/auth.guard';
 
-@WebSocketGateway()
+@WebSocketGateway({ namespace: '/ws', cors: { origin: '*' } })
 export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer() server: Server;
 
