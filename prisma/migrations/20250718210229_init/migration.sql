@@ -36,6 +36,8 @@ CREATE TABLE "games" (
     "winReason" "WinReason",
     "creatorId" TEXT NOT NULL,
     "joinerId" TEXT,
+    "creatorSocketId" TEXT NOT NULL,
+    "joinerSocketId" TEXT,
     "winnerId" TEXT,
     "isJoinerFirstTime" BOOLEAN NOT NULL DEFAULT false,
 

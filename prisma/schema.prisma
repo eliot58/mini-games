@@ -41,6 +41,9 @@ model Game {
   creatorId          String
   joinerId           String?
 
+  creatorSocketId    String
+  joinerSocketId     String?
+
   winnerId           String?
   isJoinerFirstTime  Boolean     @default(false)
 

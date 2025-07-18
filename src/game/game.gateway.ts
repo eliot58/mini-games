@@ -55,6 +55,9 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         const opponentId =
           game.creatorId === user.tgId ? game.joinerId : game.creatorId;
 
+          const opponentSocketId =
+          game.creatorId === user.tgId ? game.joinerSocketId : game.creatorSocketId;
+
         await this.prisma.game.update({
           where: { id: game.id },
           data: {
@@ -75,7 +78,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         this.logger.log(`Game ended due to disconnect: gameId=${game.id}, winner=${opponentId}`);
 
         this.server
-          .to(opponentId!)
+          .to(opponentSocketId!)
           .emit('opponentLeft', { gameId: game.id, winner: opponentId });
       }
     }
@@ -148,6 +151,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           dot_size: gameType === 'dot' ? dot_size : null,
           blot_size: gameType === 'blot' ? blot_size : null,
           creatorId: client.tgId,
+          creatorSocketId: client.id
         },
       });
 
@@ -215,6 +219,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         where: { id: gameId },
         data: {
           joinerId: client.tgId,
+          joinerSocketId: client.id,
           status: 'started',
           startedAt: new Date(),
           isJoinerFirstTime: isFirstTime,
@@ -231,7 +236,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       this.logger.log(`Game started: gameId=${gameId}, joinerId=${client.tgId}`);
       client.emit('gameJoined', updatedGame);
-      this.server.to(game.creatorId).emit?.('opponentJoined', updatedGame);
+      this.server.to(game.creatorSocketId).emit('opponentJoined', updatedGame);
     } catch (error) {
       this.logger.error('Failed to join game', error);
       client.emit('error', { message: 'Failed to join game' });
@@ -297,8 +302,8 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       });
 
       this.logger.log(`Game won: gameId=${gameId}, winnerId=${playerId}`);
-      this.server.to(game.creatorId).emit('gameEnded', { winner: playerId });
-      this.server.to(game.joinerId!).emit('gameEnded', { winner: playerId });
+      this.server.to(game.creatorSocketId).emit('gameEnded', { winner: playerId });
+      this.server.to(game.joinerSocketId!).emit('gameEnded', { winner: playerId });
       return;
     }
 
@@ -306,8 +311,8 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     await this.redis.setKey(`game:${gameId}:turn`, nextTurn!);
 
     this.logger.log(`Move made: gameId=${gameId}, playerId=${playerId}, nextTurn=${nextTurn}`);
-    this.server.to(game.creatorId).emit('moveMade', newMove);
-    this.server.to(game.joinerId!).emit('moveMade', newMove);
+    this.server.to(game.creatorSocketId).emit('moveMade', newMove);
+    this.server.to(game.joinerSocketId!).emit('moveMade', newMove);
   }
 
   private checkWin(
