@@ -157,6 +157,11 @@ export class GameController {
     }
   }
 
+  @Get('getGames')
+  async getGames() {
+    return await this.prisma.game.findMany();
+  }
+
   @Get('getInvoiceLink')
   async getInvoiceLink(@Query('amount') amount: number) {
     const prices = [{ label: 'XTR', amount }];

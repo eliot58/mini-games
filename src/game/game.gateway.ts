@@ -26,22 +26,30 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private readonly logger = new Logger(GameGateway.name);
 
   handleConnection(client: SocketWithAuth) {
-    console.log(`Client connected: ${client.tgId}`);
+    this.logger.log(`Client connected: tgId=${client.tgId}`);
   }
 
   async handleDisconnect(client: SocketWithAuth) {
+    this.logger.log(`Client disconnected: tgId=${client.tgId}`);
+
     const user = await this.prisma.user.findUnique({
       where: { tgId: client.tgId },
     });
 
-    if (!user) return client.emit('error', { message: 'User not found' });
+    if (!user) {
+      this.logger.warn(`User not found on disconnect: tgId=${client.tgId}`);
+      return client.emit('error', { message: 'User not found' });
+    }
 
     if (user.current_game) {
       const game = await this.prisma.game.findUnique({
         where: { id: user.current_game },
       });
 
-      if (!game) return client.emit('error', { message: 'Game not found' });
+      if (!game) {
+        this.logger.warn(`Game not found on disconnect: gameId=${user.current_game}`);
+        return client.emit('error', { message: 'Game not found' });
+      }
 
       if (game.status === 'started') {
         const opponentId =
@@ -64,6 +72,8 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           data: { current_game: null },
         });
 
+        this.logger.log(`Game ended due to disconnect: gameId=${game.id}, winner=${opponentId}`);
+
         this.server
           .to(opponentId!)
           .emit('opponentLeft', { gameId: game.id, winner: opponentId });
@@ -83,45 +93,50 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       blot_size?: 'small' | 'medium' | 'big';
     },
   ) {
+    this.logger.log(`createGame requested: tgId=${client.tgId}, data=${JSON.stringify(data)}`);
+
     try {
       const user = await this.prisma.user.findUnique({
         where: { tgId: client.tgId },
       });
 
-      if (!user) return client.emit('error', { message: 'User not found' });
+      if (!user) {
+        this.logger.warn(`User not found: tgId=${client.tgId}`);
+        return client.emit('error', { message: 'User not found' });
+      }
+
+      if (user.current_game) {
+        this.logger.warn(`User is already in a game: tgId=${client.tgId}, gameId=${user.current_game}`);
+        return client.emit('error', { message: 'You are already in a game' });
+      }      
 
       if (user.balance < 10) {
+        this.logger.warn(`Not enough balance: tgId=${client.tgId}, balance=${user.balance}`);
         return client.emit('error', { message: 'Not enough balance' });
       }
 
       const { gameType, winLines, dot_size, blot_size } = data;
 
       if (!['dot', 'blot', 'xo'].includes(gameType)) {
+        this.logger.warn(`Invalid gameType: ${gameType}`);
         return client.emit('error', { message: 'Invalid gameType' });
       }
 
-      if (gameType === 'xo') {
-        if (winLines !== 5 && winLines !== 6) {
-          return client.emit('error', {
-            message: 'Invalid winLines for XO. Must be 5 or 6.',
-          });
-        }
+      if (gameType === 'xo' && (winLines !== 5 && winLines !== 6)) {
+        return client.emit('error', { message: 'Invalid winLines for XO. Must be 5 or 6.' });
       }
 
-      if (gameType === 'dot') {
-        if (!dot_size || dot_size < 100 || dot_size > 200) {
-          return client.emit('error', {
-            message: 'Invalid dot_size for dot. Must be between 100 and 200.',
-          });
-        }
+      if (gameType === 'dot' && (!dot_size || dot_size < 100 || dot_size > 200)) {
+        return client.emit('error', {
+          message: 'Invalid dot_size for dot. Must be between 100 and 200.',
+        });
       }
 
       if (gameType === 'blot') {
         const allowedSizes = ['small', 'medium', 'big'];
         if (!blot_size || !allowedSizes.includes(blot_size)) {
           return client.emit('error', {
-            message:
-              'Invalid blot_size for blot. Must be small, medium, or big.',
+            message: 'Invalid blot_size for blot. Must be small, medium, or big.',
           });
         }
       }
@@ -138,11 +153,10 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       await this.prisma.user.update({
         where: { tgId: client.tgId },
-        data: {
-          current_game: newGame.id,
-        },
+        data: { current_game: newGame.id },
       });
 
+      this.logger.log(`Game created: gameId=${newGame.id}, creatorId=${client.tgId}`);
       client.emit('gameCreated', newGame);
     } catch (err) {
       this.logger.error('Failed to create game', err);
@@ -157,33 +171,32 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() data: { gameId: string },
   ) {
     const { gameId } = data;
+    this.logger.log(`joinGame requested: tgId=${client.tgId}, gameId=${gameId}`);
 
     try {
       const game = await this.prisma.game.findUnique({ where: { id: gameId } });
 
       if (!game) {
+        this.logger.warn(`Game not found: gameId=${gameId}`);
         return client.emit('error', { message: 'Game not found' });
       }
 
       if (game.status !== 'waiting') {
+        this.logger.warn(`Game is not joinable: gameId=${gameId}, status=${game.status}`);
         return client.emit('error', { message: 'Game is not joinable' });
       }
 
       if (game.joinerId) {
+        this.logger.warn(`Game already has a joiner: gameId=${gameId}`);
         return client.emit('error', { message: 'Game already has a joiner' });
       }
 
       if (game.creatorId === client.tgId) {
-        return client.emit('error', {
-          message: 'You cannot join your own game',
-        });
+        return client.emit('error', { message: 'You cannot join your own game' });
       }
 
       let isFirstTime = false;
-
-      let user = await this.prisma.user.findUnique({
-        where: { tgId: client.tgId },
-      });
+      let user = await this.prisma.user.findUnique({ where: { tgId: client.tgId } });
 
       if (!user) {
         user = await this.prisma.user.create({
@@ -195,6 +208,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         });
 
         isFirstTime = true;
+        this.logger.log(`New user created: tgId=${client.tgId}`);
       }
 
       const updatedGame = await this.prisma.game.update({
@@ -212,11 +226,10 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       await this.prisma.user.update({
         where: { tgId: game.creatorId },
-        data: {
-          balance: { decrement: 10 },
-        },
+        data: { balance: { decrement: 10 } },
       });
 
+      this.logger.log(`Game started: gameId=${gameId}, joinerId=${client.tgId}`);
       client.emit('gameJoined', updatedGame);
       this.server.to(game.creatorId).emit?.('opponentJoined', updatedGame);
     } catch (error) {
@@ -234,17 +247,22 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const { gameId, x, y } = data;
     const playerId = client.tgId;
 
+    this.logger.log(`makeMove: gameId=${gameId}, playerId=${playerId}, x=${x}, y=${y}`);
+
     const game = await this.prisma.game.findUnique({ where: { id: gameId } });
-    if (!game || game.status !== 'started')
+    if (!game || game.status !== 'started') {
       return client.emit('error', { message: 'Invalid game' });
+    }
 
     const isPlayer = [game.creatorId, game.joinerId].includes(playerId);
-    if (!isPlayer)
+    if (!isPlayer) {
       return client.emit('error', { message: 'You are not a player' });
+    }
 
     const currentTurn = await this.redis.getKey(`game:${gameId}:turn`);
-    if (currentTurn !== playerId)
+    if (currentTurn !== playerId) {
       return client.emit('error', { message: 'Not your turn' });
+    }
 
     const rawMoves = await this.redis.getKey(`game:${gameId}:board`);
     const moves = rawMoves ? JSON.parse(rawMoves) : [];
@@ -255,7 +273,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     const newMove = { x, y, playerId };
     moves.push(newMove);
-
     await this.redis.setKey(`game:${gameId}:board`, JSON.stringify(moves));
 
     const won = this.checkWin(moves, playerId, game.winLines ?? 5);
@@ -279,15 +296,16 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         data: { current_game: null },
       });
 
+      this.logger.log(`Game won: gameId=${gameId}, winnerId=${playerId}`);
       this.server.to(game.creatorId).emit('gameEnded', { winner: playerId });
       this.server.to(game.joinerId!).emit('gameEnded', { winner: playerId });
       return;
     }
 
-    const nextTurn =
-      playerId === game.creatorId ? game.joinerId : game.creatorId;
+    const nextTurn = playerId === game.creatorId ? game.joinerId : game.creatorId;
     await this.redis.setKey(`game:${gameId}:turn`, nextTurn!);
 
+    this.logger.log(`Move made: gameId=${gameId}, playerId=${playerId}, nextTurn=${nextTurn}`);
     this.server.to(game.creatorId).emit('moveMade', newMove);
     this.server.to(game.joinerId!).emit('moveMade', newMove);
   }
