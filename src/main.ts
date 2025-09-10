@@ -7,6 +7,7 @@ import { AppModule } from './app.module';
 import { FastifyCorsOptions } from '@fastify/cors';
 import { ValidationPipe } from '@nestjs/common';
 import './instrument';
+import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestFastifyApplication>(
@@ -38,8 +39,16 @@ async function bootstrap() {
     methods: '*',
     allowedHeaders: ['*', 'Authorization', 'Content-Type'],
   };
-
   app.enableCors(corsOptions);
+
+  const config = new DocumentBuilder()
+    .setTitle('Mini games API')
+    .setDescription('The mini games API')
+    .setVersion('1.0')
+    .addBearerAuth()
+    .build();
+  const documentFactory = () => SwaggerModule.createDocument(app, config);
+  SwaggerModule.setup('docs', app, documentFactory);
 
   await app.listen(8080, '0.0.0.0');
 }

@@ -3,42 +3,36 @@ import {
   CanActivate,
   ExecutionContext,
   UnauthorizedException,
-  BadRequestException,
 } from '@nestjs/common';
 import { RequestWithAuth, SocketWithAuth } from './auth.types';
-import { isValid, parse } from '@telegram-apps/init-data-node';
-import { ConfigService } from '@nestjs/config';
-import { WsBadRequestException, WsUnauthorizedException } from '../exceptions/ws.exceptions';
+import { WsUnauthorizedException } from '../exceptions/ws.exceptions';
+import { JwtService } from '@nestjs/jwt';
 
 @Injectable()
 export class AuthGuard implements CanActivate {
-  constructor(private readonly configService: ConfigService) {}
+  constructor(private readonly jwtService: JwtService) { }
 
-  canActivate(context: ExecutionContext): boolean {
+  async canActivate(context: ExecutionContext): Promise<boolean> {
     const request: RequestWithAuth = context.switchToHttp().getRequest();
+    const token = this.extractTokenFromHeader(request);
 
-    const initData = this.extractInitDataFromHeader(request);
-    if (!initData) {
-      throw new UnauthorizedException('No init data provided');
+    if (!token) throw new UnauthorizedException('No token provided');
+
+    try {
+      const payload = await this.jwtService.verifyAsync(token);
+
+      if (payload.type !== "access") throw new UnauthorizedException('Invalid token type');
+
+
+      request.tgId = payload.sub;
+    } catch (err) {
+      throw new UnauthorizedException('Invalid or expired token');
     }
-
-    const botToken = this.configService.get<string>('BOT_TOKEN');
-
-    if (!isValid(initData, botToken!)) {
-      throw new BadRequestException('Invalid init data');
-    }
-
-    const parsed = parse(initData);
-
-    if (!parsed.user) return false;
-    request.tgId = parsed.user.id.toString();
-    request.username = parsed.user.first_name;
-    request.photo_url = parsed.user.photo_url || '';
 
     return true;
   }
 
-  private extractInitDataFromHeader(request: RequestWithAuth): string | null {
+  private extractTokenFromHeader(request: RequestWithAuth): string | null {
     const authHeader = request.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return null;
@@ -49,28 +43,26 @@ export class AuthGuard implements CanActivate {
 
 @Injectable()
 export class WsAuthGuard implements CanActivate {
-  constructor(private readonly configService: ConfigService) {}
+  constructor(private readonly jwtService: JwtService) { }
 
-  canActivate(context: ExecutionContext): boolean {
+  async canActivate(context: ExecutionContext): Promise<boolean> {
     const client: SocketWithAuth = context.switchToWs().getClient();
 
-    const initData = this.extractInitDataFromHeader(client);
-    if (!initData) {
-      throw new WsUnauthorizedException('No init data provided');
+    const token = this.extractInitDataFromHeader(client);
+    if (!token) {
+      throw new WsUnauthorizedException('No token provided');
     }
 
-    // const botToken = this.configService.get<string>('BOT_TOKEN');
+    try {
+      const payload = await this.jwtService.verifyAsync(token);
 
-    // if (!isValid(initData, botToken!)) {
-    //   throw new WsBadRequestException('Invalid init data');
-    // }
+      if (payload.type !== "access") throw new WsUnauthorizedException('Invalid token type');
 
-    // const parsed = parse(initData);
 
-    // if (!parsed.user) return false;
-    client.tgId = initData
-    client.username = "tester"
-    client.photo_url = 'https://t.me/i/userpic/320/uoiJifv6U_eKqgm9fOtGAycK4pcVPTYLqap2sq4UkK4.svg';
+      client.tgId = payload.sub;
+    } catch (err) {
+      throw new WsUnauthorizedException('Invalid or expired token');
+    }
 
     return true;
   }

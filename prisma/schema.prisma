@@ -10,18 +10,27 @@ datasource db {
 
 model User {
   tgId         String    @id
-  balance      Int       @default(70)
+  balance      Int       @default(120)
   username     String
   photo_url    String
 
   current_game String?   @db.Uuid
   createdAt    DateTime  @default(now())
 
+  lastDate     DateTime?
+  ip_address   String?
+  is_premium   Boolean   @default(false)
+  language     String?
+
   createdGames Game[]    @relation("UserCreatedGames")
   joinedGames  Game[]    @relation("UserJoinedGames")
 
+  payments     Payment[]
+  rewars       Reward[]
+
   @@map("users")
 }
+
 
 model Game {
   id                 String      @id @default(uuid()) @db.Uuid
@@ -30,6 +39,7 @@ model Game {
   createdAt          DateTime    @default(now())
   startedAt          DateTime?
   endedAt            DateTime?
+  moves              Int         @default(0)
 
   gameType           GameType
 
@@ -51,6 +61,41 @@ model Game {
   joiner             User?       @relation("UserJoinedGames", fields: [joinerId], references: [tgId], onDelete: Cascade)
 
   @@map("games")
+}
+
+model Reward {
+  id          Int         @id @default(autoincrement())
+
+  reward_type RewardType
+  meaning     Int
+
+  userId    String
+  user      User     @relation(fields: [userId], references: [tgId], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@map("rewards")
+}
+
+model Payment {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String
+  user      User     @relation(fields: [userId], references: [tgId], onDelete: Cascade)
+
+  amount    Int
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@map("payments")
+}
+
+
+enum RewardType {
+  enter
+  daily
+  new
+  unique
 }
 
 enum GameType {
