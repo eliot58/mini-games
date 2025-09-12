@@ -55,7 +55,6 @@ model Game {
   joinerSocketId     String?
 
   winnerId           String?
-  isJoinerFirstTime  Boolean     @default(false)
 
   creator            User        @relation("UserCreatedGames", fields: [creatorId], references: [tgId], onDelete: Cascade)
   joiner             User?       @relation("UserJoinedGames", fields: [joinerId], references: [tgId], onDelete: Cascade)
