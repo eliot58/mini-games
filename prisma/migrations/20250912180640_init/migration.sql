@@ -16,6 +16,7 @@ CREATE TYPE "BlotSize" AS ENUM ('small', 'medium', 'big');
 -- CreateTable
 CREATE TABLE "users" (
     "tgId" TEXT NOT NULL,
+    "invited_by" TEXT,
     "balance" INTEGER NOT NULL DEFAULT 120,
     "username" TEXT NOT NULL,
     "photo_url" TEXT NOT NULL,
@@ -47,7 +48,6 @@ CREATE TABLE "games" (
     "creatorSocketId" TEXT NOT NULL,
     "joinerSocketId" TEXT,
     "winnerId" TEXT,
-    "isJoinerFirstTime" BOOLEAN NOT NULL DEFAULT false,
 
     CONSTRAINT "games_pkey" PRIMARY KEY ("id")
 );
@@ -78,6 +78,9 @@ CREATE INDEX "rewards_userId_createdAt_idx" ON "rewards"("userId", "createdAt");
 
 -- CreateIndex
 CREATE INDEX "payments_userId_createdAt_idx" ON "payments"("userId", "createdAt");
+
+-- AddForeignKey
+ALTER TABLE "users" ADD CONSTRAINT "users_invited_by_fkey" FOREIGN KEY ("invited_by") REFERENCES "users"("tgId") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "games" ADD CONSTRAINT "games_creatorId_fkey" FOREIGN KEY ("creatorId") REFERENCES "users"("tgId") ON DELETE CASCADE ON UPDATE CASCADE;

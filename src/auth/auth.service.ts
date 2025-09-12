@@ -21,7 +21,7 @@ export class AuthService {
         });
     }
 
-    public async login(initData: string, req: FastifyRequest) {
+    public async login(initData: string, invited_by: string | undefined, req: FastifyRequest) {
         const parseData = await this.getUserByInitData(initData);
         const tgId = parseData.user.id;
 
@@ -35,25 +35,63 @@ export class AuthService {
             });
 
             if (!user) {
-                user = await tx.user.create({
-                    data: {
-                        tgId,
-                        username: parseData.user.firstName,
-                        photo_url: parseData.user.photoUrl,
-                        is_premium: parseData.user.isPremium,
-                        language: parseData.user.languageCode,
-                        ip_address: clientIp,
-                    },
-                    select: { tgId: true },
-                });
+                if (invited_by) {
+                    await tx.user.create({
+                        data: {
+                            tgId,
+                            invited_by,
+                            username: parseData.user.firstName,
+                            photo_url: parseData.user.photoUrl,
+                            is_premium: parseData.user.isPremium,
+                            language: parseData.user.languageCode,
+                            ip_address: clientIp,
+                        },
+                        select: { tgId: true },
+                    });
 
-                await tx.reward.create({
-                    data: {
-                        userId: user.tgId,
-                        meaning: 120,
-                        reward_type: 'enter'
-                    },
-                });
+                    await tx.user.update({
+                        where: { tgId: invited_by },
+                        data: {
+                            balance: { increment: 70 }
+                        }
+                    })
+
+                    await tx.reward.create({
+                        data: {
+                            userId: invited_by,
+                            meaning: 70,
+                            reward_type: 'unique'
+                        },
+                    });
+    
+                    await tx.reward.create({
+                        data: {
+                            userId: tgId,
+                            meaning: 120,
+                            reward_type: 'enter'
+                        },
+                    });
+                } else {
+                    await tx.user.create({
+                        data: {
+                            tgId,
+                            username: parseData.user.firstName,
+                            photo_url: parseData.user.photoUrl,
+                            is_premium: parseData.user.isPremium,
+                            language: parseData.user.languageCode,
+                            ip_address: clientIp,
+                        },
+                        select: { tgId: true },
+                    });
+    
+                    await tx.reward.create({
+                        data: {
+                            userId: tgId,
+                            meaning: 120,
+                            reward_type: 'enter'
+                        },
+                    });
+                }
 
             } else {
                 await tx.user.update({

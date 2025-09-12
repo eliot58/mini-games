@@ -21,7 +21,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   constructor(
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
-  ) {}
+  ) { }
 
   private readonly logger = new Logger(GameGateway.name);
 
@@ -174,73 +174,56 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: SocketWithAuth,
     @MessageBody() data: { gameId: string },
   ) {
-    // const { gameId } = data;
-    // this.logger.log(`joinGame requested: tgId=${client.tgId}, gameId=${gameId}`);
+    const { gameId } = data;
+    this.logger.log(`joinGame requested: tgId=${client.tgId}, gameId=${gameId}`);
 
-    // try {
-    //   const game = await this.prisma.game.findUnique({ where: { id: gameId } });
+    try {
+      const game = await this.prisma.game.findUnique({ where: { id: gameId } });
 
-    //   if (!game) {
-    //     this.logger.warn(`Game not found: gameId=${gameId}`);
-    //     return client.emit('error', { message: 'Game not found' });
-    //   }
+      if (!game) {
+        this.logger.warn(`Game not found: gameId=${gameId}`);
+        return client.emit('error', { message: 'Game not found' });
+      }
 
-    //   if (game.status !== 'waiting') {
-    //     this.logger.warn(`Game is not joinable: gameId=${gameId}, status=${game.status}`);
-    //     return client.emit('error', { message: 'Game is not joinable' });
-    //   }
+      if (game.status !== 'waiting') {
+        this.logger.warn(`Game is not joinable: gameId=${gameId}, status=${game.status}`);
+        return client.emit('error', { message: 'Game is not joinable' });
+      }
 
-    //   if (game.joinerId) {
-    //     this.logger.warn(`Game already has a joiner: gameId=${gameId}`);
-    //     return client.emit('error', { message: 'Game already has a joiner' });
-    //   }
+      if (game.joinerId) {
+        this.logger.warn(`Game already has a joiner: gameId=${gameId}`);
+        return client.emit('error', { message: 'Game already has a joiner' });
+      }
 
-    //   if (game.creatorId === client.tgId) {
-    //     return client.emit('error', { message: 'You cannot join your own game' });
-    //   }
+      if (game.creatorId === client.tgId) {
+        return client.emit('error', { message: 'You cannot join your own game' });
+      }
 
-    //   let isFirstTime = false;
-    //   let user = await this.prisma.user.findUnique({ where: { tgId: client.tgId } });
+      const updatedGame = await this.prisma.game.update({
+        where: { id: gameId },
+        data: {
+          joinerId: client.tgId,
+          joinerSocketId: client.id,
+          status: 'started',
+          startedAt: new Date()
+        },
+      });
 
-    //   if (!user) {
-    //     user = await this.prisma.user.create({
-    //       data: {
-    //         tgId: client.tgId,
-    //         username: client.username,
-    //         photo_url: client.photo_url,
-    //       },
-    //     });
+      await this.redis.setKey(`game:${gameId}:board`, JSON.stringify([]));
+      await this.redis.setKey(`game:${gameId}:turn`, game.creatorId);
 
-    //     isFirstTime = true;
-    //     this.logger.log(`New user created: tgId=${client.tgId}`);
-    //   }
+      await this.prisma.user.update({
+        where: { tgId: game.creatorId },
+        data: { balance: { decrement: 10 } },
+      });
 
-    //   const updatedGame = await this.prisma.game.update({
-    //     where: { id: gameId },
-    //     data: {
-    //       joinerId: client.tgId,
-    //       joinerSocketId: client.id,
-    //       status: 'started',
-    //       startedAt: new Date(),
-    //       isJoinerFirstTime: isFirstTime,
-    //     },
-    //   });
-
-    //   await this.redis.setKey(`game:${gameId}:board`, JSON.stringify([]));
-    //   await this.redis.setKey(`game:${gameId}:turn`, game.creatorId);
-
-    //   await this.prisma.user.update({
-    //     where: { tgId: game.creatorId },
-    //     data: { balance: { decrement: 10 } },
-    //   });
-
-    //   this.logger.log(`Game started: gameId=${gameId}, joinerId=${client.tgId}`);
-    //   client.emit('gameJoined', updatedGame);
-    //   this.server.to(game.creatorSocketId).emit('opponentJoined', updatedGame);
-    // } catch (error) {
-    //   this.logger.error('Failed to join game', error);
-    //   client.emit('error', { message: 'Failed to join game' });
-    // }
+      this.logger.log(`Game started: gameId=${gameId}, joinerId=${client.tgId}`);
+      client.emit('gameJoined', updatedGame);
+      this.server.to(game.creatorSocketId).emit('opponentJoined', updatedGame);
+    } catch (error) {
+      this.logger.error('Failed to join game', error);
+      client.emit('error', { message: 'Failed to join game' });
+    }
   }
 
   @UseGuards(WsAuthGuard)

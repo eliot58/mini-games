@@ -10,6 +10,7 @@ datasource db {
 
 model User {
   tgId         String    @id
+  invited_by   String?
   balance      Int       @default(120)
   username     String
   photo_url    String
@@ -25,8 +26,11 @@ model User {
   createdGames Game[]    @relation("UserCreatedGames")
   joinedGames  Game[]    @relation("UserJoinedGames")
 
+  invitedBy   User?           @relation("UserInvites", fields: [invited_by], references: [tgId])
+  invitesMade User[]          @relation("UserInvites")
+
   payments     Payment[]
-  rewars       Reward[]
+  rewards      Reward[]
 
   @@map("users")
 }
