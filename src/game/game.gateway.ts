@@ -4,6 +4,7 @@ import {
   MessageBody,
   OnGatewayConnection,
   OnGatewayDisconnect,
+  OnGatewayInit,
   SubscribeMessage,
   WebSocketGateway,
   WebSocketServer,
@@ -14,16 +15,44 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { WsAuthGuard } from '../auth/auth.guard';
 
+type GameLite = {
+  id: string;
+  creatorId: string;
+  joinerId: string | null;
+  creatorSocketId: string;
+  joinerSocketId: string | null;
+};
+
 @WebSocketGateway({ namespace: '/ws', cors: { origin: '*' } })
-export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit {
   @WebSocketServer() server: Server;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
-  ) { }
+  ) {}
 
   private readonly logger = new Logger(GameGateway.name);
+
+  // ====== TIME CONTROL SETTINGS ======
+  // Общее время на игрока в мс (измени при необходимости)
+  private static readonly TIME_CONTROL_MS = 180_000; // 60s per player
+  // Периодическая рассылка timeSync всем активным играм
+  private static readonly TIMESYNC_INTERVAL_MS = 2_000;
+
+  // ====== REDIS KEYS ======
+  private rk = {
+    turn: (g: string) => `game:${g}:turn`,        // tgId игрока, чей ход
+    board: (g: string) => `game:${g}:board`,      // массив ходов
+    lastTick: (g: string) => `game:${g}:lastTick`,// timestamp ms начала текущего хода
+    cLeft: (g: string) => `game:${g}:creatorLeft`,
+    jLeft: (g: string) => `game:${g}:joinerLeft`,
+  };
+
+  // ====== GATEWAY LIFECYCLE ======
+  afterInit() {
+    setInterval(() => this.broadcastTimeSync().catch(err => this.logger.error('broadcastTimeSync error', err)), GameGateway.TIMESYNC_INTERVAL_MS);
+  }
 
   handleConnection(client: SocketWithAuth) {
     this.logger.log(`Client connected: tgId=${client.tgId}`);
@@ -52,37 +81,45 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       }
 
       if (game.status === 'started') {
-        const opponentId =
-          game.creatorId === user.tgId ? game.joinerId : game.creatorId;
+        const opponentId = game.creatorId === user.tgId ? game.joinerId : game.creatorId;
+        const opponentSocketId = game.creatorId === user.tgId ? game.joinerSocketId : game.creatorSocketId;
 
-          const opponentSocketId =
-          game.creatorId === user.tgId ? game.joinerSocketId : game.creatorSocketId;
+        // списать время до момента дисконнекта и проверить тайм-аут
+        const upd = await this.updateAndCheckTimeout({
+          id: game.id,
+          creatorId: game.creatorId,
+          joinerId: game.joinerId,
+          creatorSocketId: game.creatorSocketId,
+          joinerSocketId: game.joinerSocketId,
+        });
 
-        await this.prisma.game.update({
-          where: { id: game.id },
-          data: {
-            status: 'finished',
-            endedAt: new Date(),
-            winReason: 'opponent_left',
-            winnerId: opponentId!,
-          },
+        const cLeft = upd.creatorLeft ?? GameGateway.TIME_CONTROL_MS;
+        const jLeft = upd.joinerLeft ?? GameGateway.TIME_CONTROL_MS;
+
+        await this.finishGameWithTimes({
+          gameId: game.id,
+          winnerId: opponentId!,
+          winReason: 'opponent_left',
+          creatorLeftMs: cLeft,
+          joinerLeftMs: jLeft,
+          creatorSocketId: game.creatorSocketId,
+          joinerSocketId: game.joinerSocketId ?? undefined,
         });
 
         await this.prisma.user.updateMany({
-          where: {
-            tgId: { in: [game.creatorId, game.joinerId!].filter(Boolean) },
-          },
+          where: { tgId: { in: [game.creatorId, game.joinerId!].filter(Boolean) as string[] } },
           data: { current_game: null },
         });
 
         this.logger.log(`Game ended due to disconnect: gameId=${game.id}, winner=${opponentId}`);
-
-        this.server
-          .to(opponentSocketId!)
-          .emit('opponentLeft', { gameId: game.id, winner: opponentId });
+        if (opponentSocketId) {
+          this.server.to(opponentSocketId).emit('opponentLeft', { gameId: game.id, winner: opponentId });
+        }
       }
     }
   }
+
+  // ====== PUBLIC MESSAGES ======
 
   @UseGuards(WsAuthGuard)
   @SubscribeMessage('createGame')
@@ -111,7 +148,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       if (user.current_game) {
         this.logger.warn(`User is already in a game: tgId=${client.tgId}, gameId=${user.current_game}`);
         return client.emit('error', { message: 'You are already in a game' });
-      }      
+      }
 
       if (user.balance < 10) {
         this.logger.warn(`Not enough balance: tgId=${client.tgId}, balance=${user.balance}`);
@@ -151,7 +188,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           dot_size: gameType === 'dot' ? dot_size : null,
           blot_size: gameType === 'blot' ? blot_size : null,
           creatorId: client.tgId,
-          creatorSocketId: client.id
+          creatorSocketId: client.id,
         },
       });
 
@@ -205,21 +242,41 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           joinerId: client.tgId,
           joinerSocketId: client.id,
           status: 'started',
-          startedAt: new Date()
+          startedAt: new Date(),
         },
       });
 
-      await this.redis.setKey(`game:${gameId}:board`, JSON.stringify([]));
-      await this.redis.setKey(`game:${gameId}:turn`, game.creatorId);
+      // ИНИЦИАЛИЗАЦИЯ игрового состояния в Redis
+      const now = Date.now();
+      await this.redis.setKey(this.rk.board(gameId), JSON.stringify([]));
+      await this.redis.setKey(this.rk.turn(gameId), updatedGame.creatorId);
 
+      // Таймеры
+      await this.setTimeState(gameId, {
+        turn: updatedGame.creatorId,
+        lastTick: now,
+        creatorLeft: GameGateway.TIME_CONTROL_MS,
+        joinerLeft: GameGateway.TIME_CONTROL_MS,
+      });
+
+      // списываем 10 очков у создателя
       await this.prisma.user.update({
-        where: { tgId: game.creatorId },
+        where: { tgId: updatedGame.creatorId },
         data: { balance: { decrement: 10 } },
       });
 
       this.logger.log(`Game started: gameId=${gameId}, joinerId=${client.tgId}`);
+
+      // нотификации
       client.emit('gameJoined', updatedGame);
-      this.server.to(game.creatorSocketId).emit('opponentJoined', updatedGame);
+      this.server.to(updatedGame.creatorSocketId).emit('opponentJoined', updatedGame);
+
+      // отправим первый timeSync
+      await this.emitTimeSync(
+        gameId,
+        { creator: updatedGame.creatorSocketId, joiner: updatedGame.joinerSocketId ?? undefined },
+        { creatorMs: GameGateway.TIME_CONTROL_MS, joinerMs: GameGateway.TIME_CONTROL_MS },
+      );
     } catch (error) {
       this.logger.error('Failed to join game', error);
       client.emit('error', { message: 'Failed to join game' });
@@ -247,27 +304,63 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return client.emit('error', { message: 'You are not a player' });
     }
 
-    const currentTurn = await this.redis.getKey(`game:${gameId}:turn`);
+    const currentTurn = await this.redis.getKey(this.rk.turn(gameId));
     if (currentTurn !== playerId) {
       return client.emit('error', { message: 'Not your turn' });
     }
 
-    const rawMoves = await this.redis.getKey(`game:${gameId}:board`);
+    // 1) СПИСАТЬ время у текущего игрока и проверить тайм-аут
+    const upd = await this.updateAndCheckTimeout({
+      id: game.id,
+      creatorId: game.creatorId,
+      joinerId: game.joinerId,
+      creatorSocketId: game.creatorSocketId,
+      joinerSocketId: game.joinerSocketId,
+    });
+    if (upd.timeout) {
+      const winnerId = upd.loserId === game.creatorId ? game.joinerId! : game.creatorId;
+
+      await this.finishGameWithTimes({
+        gameId,
+        winnerId,
+        winReason: 'timeout',
+        creatorLeftMs: upd.creatorLeft ?? 0,
+        joinerLeftMs: upd.joinerLeft ?? 0,
+        creatorSocketId: game.creatorSocketId,
+        joinerSocketId: game.joinerSocketId ?? undefined,
+      });
+
+      await this.prisma.user.updateMany({
+        where: { tgId: { in: [game.creatorId, game.joinerId!].filter(Boolean) as string[] } },
+        data: { current_game: null },
+      });
+
+      this.logger.log(`Game timeout: gameId=${gameId}, winner=${winnerId}`);
+      return;
+    }
+
+    // 2) обычная логика хода
+    const rawMoves = await this.redis.getKey(this.rk.board(gameId));
     const moves = rawMoves ? JSON.parse(rawMoves) : [];
 
-    if (moves.some((m) => m.x === x && m.y === y)) {
+    if (moves.some((m: any) => m.x === x && m.y === y)) {
       return client.emit('error', { message: 'Cell is already taken' });
     }
 
     const newMove = { x, y, playerId };
     moves.push(newMove);
-    await this.redis.setKey(`game:${gameId}:board`, JSON.stringify(moves));
+    await this.redis.setKey(this.rk.board(gameId), JSON.stringify(moves));
 
     const won = this.checkWin(moves, playerId, game.winLines ?? 5);
 
     if (won) {
-      await this.redis.deleteKey(`game:${gameId}:board`);
-      await this.redis.deleteKey(`game:${gameId}:turn`);
+      const upd2 = await this.updateAndCheckTimeout({
+        id: game.id,
+        creatorId: game.creatorId,
+        joinerId: game.joinerId,
+        creatorSocketId: game.creatorSocketId,
+        joinerSocketId: game.joinerSocketId,
+      });
 
       await this.prisma.game.update({
         where: { id: gameId },
@@ -276,28 +369,255 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           endedAt: new Date(),
           winReason: 'fair_win',
           winnerId: playerId,
+          moves: { increment: 1 },
+          creatorTimeLeftMs: upd2.creatorLeft ?? null,
+          joinerTimeLeftMs: upd2.joinerLeft ?? null,
         },
       });
 
       await this.prisma.user.updateMany({
-        where: { tgId: { in: [game.creatorId, game.joinerId!] } },
+        where: { tgId: { in: [game.creatorId, game.joinerId!].filter(Boolean) as string[] } },
         data: { current_game: null },
       });
 
+      await this.clearTimeState(gameId);
+
       this.logger.log(`Game won: gameId=${gameId}, winnerId=${playerId}`);
-      this.server.to(game.creatorSocketId).emit('gameEnded', { winner: playerId });
-      this.server.to(game.joinerSocketId!).emit('gameEnded', { winner: playerId });
+      this.server.to(game.creatorSocketId).emit('gameEnded', { winner: playerId, reason: 'fair_win' });
+      if (game.joinerSocketId) this.server.to(game.joinerSocketId).emit('gameEnded', { winner: playerId, reason: 'fair_win' });
       return;
     }
 
+    // 3) переключаем ход, фиксируем lastTick = now
     const nextTurn = playerId === game.creatorId ? game.joinerId : game.creatorId;
-    await this.redis.setKey(`game:${gameId}:turn`, nextTurn!);
+    await this.redis.setKey(this.rk.turn(gameId), nextTurn!);
+    await this.redis.setKey(this.rk.lastTick(gameId), String(Date.now()));
+
+    await this.prisma.game.update({
+      where: { id: gameId },
+      data: { moves: { increment: 1 } },
+    });
+
+    // отправим обновлённые остатки времени после хода
+    const st = await this.getTimeState(gameId);
+    await this.emitTimeSync(gameId, { creator: game.creatorSocketId, joiner: game.joinerSocketId ?? undefined }, {
+      creatorMs: st.creatorLeft ?? GameGateway.TIME_CONTROL_MS,
+      joinerMs: st.joinerLeft ?? GameGateway.TIME_CONTROL_MS,
+    });
 
     this.logger.log(`Move made: gameId=${gameId}, playerId=${playerId}, nextTurn=${nextTurn}`);
     this.server.to(game.creatorSocketId).emit('moveMade', newMove);
-    this.server.to(game.joinerSocketId!).emit('moveMade', newMove);
+    if (game.joinerSocketId) this.server.to(game.joinerSocketId).emit('moveMade', newMove);
   }
 
+  // Опционально: ручной тик от клиента для принудительной проверки
+  @UseGuards(WsAuthGuard)
+  @SubscribeMessage('tick')
+  async handleTick(@ConnectedSocket() client: SocketWithAuth, @MessageBody() data: { gameId: string }) {
+    const game = await this.prisma.game.findUnique({ where: { id: data.gameId } });
+    if (!game || game.status !== 'started') return;
+
+    const upd = await this.updateAndCheckTimeout({
+      id: game.id,
+      creatorId: game.creatorId,
+      joinerId: game.joinerId,
+      creatorSocketId: game.creatorSocketId,
+      joinerSocketId: game.joinerSocketId,
+    });
+
+    if (upd.timeout) {
+      const winnerId = upd.loserId === game.creatorId ? game.joinerId! : game.creatorId;
+      await this.finishGameWithTimes({
+        gameId: game.id,
+        winnerId,
+        winReason: 'timeout',
+        creatorLeftMs: upd.creatorLeft ?? 0,
+        joinerLeftMs: upd.joinerLeft ?? 0,
+        creatorSocketId: game.creatorSocketId,
+        joinerSocketId: game.joinerSocketId ?? undefined,
+      });
+      await this.prisma.user.updateMany({
+        where: { tgId: { in: [game.creatorId, game.joinerId!].filter(Boolean) as string[] } },
+        data: { current_game: null },
+      });
+    } else {
+      await this.emitTimeSync(
+        game.id,
+        { creator: game.creatorSocketId, joiner: game.joinerSocketId ?? undefined },
+        { creatorMs: upd.creatorLeft ?? 0, joinerMs: upd.joinerLeft ?? 0 },
+      );
+    }
+  }
+
+  // ====== TIMER BROADCAST LOOP ======
+  private async broadcastTimeSync() {
+    const activeGames = await this.prisma.game.findMany({
+      where: { status: 'started' },
+      select: { id: true, creatorId: true, joinerId: true, creatorSocketId: true, joinerSocketId: true },
+    });
+
+    for (const g of activeGames as GameLite[]) {
+      const upd = await this.updateAndCheckTimeout(g);
+      if (!upd) continue;
+
+      if (upd.timeout) {
+        const winnerId = upd.loserId === g.creatorId ? g.joinerId! : g.creatorId;
+        await this.finishGameWithTimes({
+          gameId: g.id,
+          winnerId,
+          winReason: 'timeout',
+          creatorLeftMs: upd.creatorLeft ?? 0,
+          joinerLeftMs: upd.joinerLeft ?? 0,
+          creatorSocketId: g.creatorSocketId,
+          joinerSocketId: g.joinerSocketId ?? undefined,
+        });
+
+        await this.prisma.user.updateMany({
+          where: { tgId: { in: [g.creatorId, g.joinerId!].filter(Boolean) as string[] } },
+          data: { current_game: null },
+        });
+      } else {
+        await this.emitTimeSync(
+          g.id,
+          { creator: g.creatorSocketId, joiner: g.joinerSocketId ?? undefined },
+          { creatorMs: upd.creatorLeft ?? 0, joinerMs: upd.joinerLeft ?? 0 },
+        );
+      }
+    }
+  }
+
+  // ====== TIMER HELPERS ======
+  private async getTimeState(gameId: string) {
+    const [turn, lastTickStr, cStr, jStr] = await Promise.all([
+      this.redis.getKey(this.rk.turn(gameId)),
+      this.redis.getKey(this.rk.lastTick(gameId)),
+      this.redis.getKey(this.rk.cLeft(gameId)),
+      this.redis.getKey(this.rk.jLeft(gameId)),
+    ]);
+
+    return {
+      turn: turn ?? null,
+      lastTick: lastTickStr ? Number(lastTickStr) : null,
+      creatorLeft: cStr ? Number(cStr) : null,
+      joinerLeft: jStr ? Number(jStr) : null,
+    };
+  }
+
+  private async setTimeState(
+    gameId: string,
+    data: {
+      turn?: string;
+      lastTick?: number;
+      creatorLeft?: number;
+      joinerLeft?: number;
+    },
+  ) {
+    const ops: Promise<any>[] = [];
+    if (data.turn !== undefined) ops.push(this.redis.setKey(this.rk.turn(gameId), data.turn));
+    if (data.lastTick !== undefined) ops.push(this.redis.setKey(this.rk.lastTick(gameId), String(data.lastTick)));
+    if (data.creatorLeft !== undefined) ops.push(this.redis.setKey(this.rk.cLeft(gameId), String(data.creatorLeft)));
+    if (data.joinerLeft !== undefined) ops.push(this.redis.setKey(this.rk.jLeft(gameId), String(data.joinerLeft)));
+    await Promise.all(ops);
+  }
+
+  private async clearTimeState(gameId: string) {
+    await Promise.all([
+      this.redis.deleteKey(this.rk.board(gameId)),
+      this.redis.deleteKey(this.rk.turn(gameId)),
+      this.redis.deleteKey(this.rk.lastTick(gameId)),
+      this.redis.deleteKey(this.rk.cLeft(gameId)),
+      this.redis.deleteKey(this.rk.jLeft(gameId)),
+    ]);
+  }
+
+  /**
+   * Списывает время у активного игрока на основании lastTick.
+   * Возвращает актуальные остатки и факт тайм-аута.
+   */
+  private async updateAndCheckTimeout(game: GameLite | { id: string; creatorId: string; joinerId: string | null }) {
+    const gameId = game.id;
+    const now = Date.now();
+
+    const { turn, lastTick, creatorLeft, joinerLeft } = await this.getTimeState(gameId);
+    if (!turn || !lastTick || creatorLeft == null || joinerLeft == null) {
+      return { creatorLeft, joinerLeft, timeout: false as const, loserId: null as string | null };
+    }
+
+    const elapsed = Math.max(0, now - lastTick);
+
+    let cLeft = creatorLeft;
+    let jLeft = joinerLeft;
+
+    if (turn === (game as any).creatorId) cLeft = Math.max(0, creatorLeft - elapsed);
+    else if (turn === (game as any).joinerId) jLeft = Math.max(0, joinerLeft - elapsed);
+
+    // зафиксируем списание и обновим lastTick, чтобы дальше считать от "сейчас"
+    await this.setTimeState(gameId, { creatorLeft: cLeft, joinerLeft: jLeft, lastTick: now });
+
+    if (cLeft === 0 || jLeft === 0) {
+      const loserId = cLeft === 0 ? (game as any).creatorId : (game as any).joinerId!;
+      return { creatorLeft: cLeft, joinerLeft: jLeft, timeout: true as const, loserId };
+    }
+
+    return { creatorLeft: cLeft, joinerLeft: jLeft, timeout: false as const, loserId: null as string | null };
+  }
+
+  /** Завершение игры с записью остатков времени в БД и очисткой Redis */
+  private async finishGameWithTimes(params: {
+    gameId: string;
+    winnerId: string;
+    winReason: 'timeout' | 'opponent_left' | 'fair_win';
+    creatorLeftMs: number;
+    joinerLeftMs: number;
+    creatorSocketId?: string;
+    joinerSocketId?: string;
+  }) {
+    const { gameId, winnerId, winReason, creatorLeftMs, joinerLeftMs, creatorSocketId, joinerSocketId } = params;
+
+    await this.prisma.game.update({
+      where: { id: gameId },
+      data: {
+        status: 'finished',
+        endedAt: new Date(),
+        winReason,
+        winnerId,
+        creatorTimeLeftMs: creatorLeftMs,
+        joinerTimeLeftMs: joinerLeftMs,
+      },
+    });
+
+    await this.clearTimeState(gameId);
+
+    const payload = {
+      winner: winnerId,
+      reason: winReason,
+      creatorTimeLeftMs: creatorLeftMs,
+      joinerTimeLeftMs: joinerLeftMs,
+    };
+
+    if (creatorSocketId) this.server.to(creatorSocketId).emit('gameEnded', payload);
+    if (joinerSocketId) this.server.to(joinerSocketId).emit('gameEnded', payload);
+  }
+
+  /** Синхронизация времени клиентам (включая turn и serverTs) */
+  private async emitTimeSync(
+    gameId: string,
+    sockets: { creator?: string; joiner?: string },
+    left: { creatorMs: number; joinerMs: number },
+  ) {
+    const { turn } = await this.getTimeState(gameId);
+    const payload = {
+      gameId,
+      creatorTimeLeftMs: left.creatorMs,
+      joinerTimeLeftMs: left.joinerMs,
+      turn,
+      serverTs: Date.now(),
+    };
+    if (sockets.creator) this.server.to(sockets.creator).emit('timeSync', payload);
+    if (sockets.joiner) this.server.to(sockets.joiner).emit('timeSync', payload);
+  }
+
+  // ====== WIN CHECK ======
   private checkWin(
     moves: { x: number; y: number; playerId: string }[],
     playerId: string,

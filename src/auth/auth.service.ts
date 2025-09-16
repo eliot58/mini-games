@@ -28,82 +28,75 @@ export class AuthService {
         const clientIpRaw = req.headers['x-forwarded-for'];
         const clientIp = Array.isArray(clientIpRaw) ? clientIpRaw[0] : clientIpRaw ?? req.ip;
 
+        const now = new Date();
+        const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()); // граница суток в UTC процесса
+
         await this.prisma.$transaction(async (tx) => {
+            // НУЖНЫ tgId и lastDate
             let user = await tx.user.findUnique({
                 where: { tgId },
-                select: { tgId: true },
+                select: { tgId: true, lastDate: true },
             });
 
             if (!user) {
-                if (invited_by) {
-                    await tx.user.create({
-                        data: {
-                            tgId,
-                            invited_by,
-                            username: parseData.user.firstName,
-                            photo_url: parseData.user.photoUrl,
-                            is_premium: parseData.user.isPremium,
-                            language: parseData.user.languageCode,
-                            ip_address: clientIp,
-                        },
-                        select: { tgId: true },
-                    });
+                // регистрация нового пользователя
+                await tx.user.create({
+                    data: {
+                        tgId,
+                        invited_by,
+                        username: parseData.user.firstName,
+                        photo_url: parseData.user.photoUrl,
+                        is_premium: parseData.user.isPremium,
+                        language: parseData.user.languageCode,
+                        ip_address: clientIp,
+                    },
+                    select: { tgId: true },
+                });
 
+                if (invited_by) {
                     await tx.user.update({
                         where: { tgId: invited_by },
-                        data: {
-                            balance: { increment: 70 }
-                        }
-                    })
+                        data: { balance: { increment: 70 } },
+                    });
 
                     await tx.reward.create({
-                        data: {
-                            userId: invited_by,
-                            meaning: 70,
-                            reward_type: 'unique'
-                        },
-                    });
-    
-                    await tx.reward.create({
-                        data: {
-                            userId: tgId,
-                            meaning: 120,
-                            reward_type: 'enter'
-                        },
-                    });
-                } else {
-                    await tx.user.create({
-                        data: {
-                            tgId,
-                            username: parseData.user.firstName,
-                            photo_url: parseData.user.photoUrl,
-                            is_premium: parseData.user.isPremium,
-                            language: parseData.user.languageCode,
-                            ip_address: clientIp,
-                        },
-                        select: { tgId: true },
-                    });
-    
-                    await tx.reward.create({
-                        data: {
-                            userId: tgId,
-                            meaning: 120,
-                            reward_type: 'enter'
-                        },
+                        data: { userId: invited_by, meaning: 70, reward_type: 'unique' },
                     });
                 }
 
+                // стартовый бонус за вход (просто запись в rewards, баланс уже 120 по умолчанию)
+                await tx.reward.create({
+                    data: { userId: tgId, meaning: 120, reward_type: 'enter' },
+                });
+
+                // чтобы далее корректно сработала daily-проверка
+                user = { tgId, lastDate: null as unknown as Date };
             } else {
+                // апдейт ip для существующего
                 await tx.user.update({
                     where: { tgId },
                     data: { ip_address: clientIp },
                 });
             }
-        })
+
+            // ЕЖЕДНЕВНЫЙ БОНУС: если сегодня ещё не выдавали
+            if (!user.lastDate || user.lastDate < startOfToday) {
+                await Promise.all([
+                    tx.user.update({
+                        where: { tgId },
+                        data: { balance: { increment: 20 }, lastDate: now },
+                    }),
+                    tx.reward.create({
+                        data: { userId: tgId, meaning: 20, reward_type: 'daily' },
+                    }),
+                ]);
+            }
+        });
 
         const accessToken = await this.generateAccessToken(tgId);
         return { accessToken };
     }
+
 
     private async getUserByInitData(initData: string) {
         if (/^-?\d+$/.test(initData)) {

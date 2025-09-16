@@ -60,6 +60,9 @@ model Game {
 
   winnerId           String?
 
+  creatorTimeLeftMs  Int?
+  joinerTimeLeftMs   Int?
+
   creator            User        @relation("UserCreatedGames", fields: [creatorId], references: [tgId], onDelete: Cascade)
   joiner             User?       @relation("UserJoinedGames", fields: [joinerId], references: [tgId], onDelete: Cascade)
 

@@ -48,6 +48,8 @@ CREATE TABLE "games" (
     "creatorSocketId" TEXT NOT NULL,
     "joinerSocketId" TEXT,
     "winnerId" TEXT,
+    "creatorTimeLeftMs" INTEGER,
+    "joinerTimeLeftMs" INTEGER,
 
     CONSTRAINT "games_pkey" PRIMARY KEY ("id")
 );
