@@ -126,10 +126,10 @@ export class GameController {
       type: 'article',
       id: randomBytes(5).toString('hex'),
       title: `Invitation to the game!`,
-      thumbnail_url:
-        'https://ipfs.io/ipfs/bafkreidmkchryuy533s6vfcfsndjajnie2czaa64bp6sygz7zs4wksqbbq',
-      thumbnail_width: 300,
-      thumbnail_height: 300,
+      // thumbnail_url:
+      //   'https://ipfs.io/ipfs/bafkreidmkchryuy533s6vfcfsndjajnie2czaa64bp6sygz7zs4wksqbbq',
+      // thumbnail_width: 300,
+      // thumbnail_height: 300,
       input_message_content: {
         message_text,
       },
