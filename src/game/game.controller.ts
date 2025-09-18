@@ -15,6 +15,7 @@ import { AuthGuard } from '../auth/auth.guard';
 import { randomBytes } from 'crypto';
 import { firstValueFrom } from 'rxjs';
 import { HttpService } from '@nestjs/axios';
+import { ApiBearerAuth } from '@nestjs/swagger';
 
 @Controller('game')
 export class GameController {
@@ -71,6 +72,7 @@ export class GameController {
   }
 
   @Get('getShareMessage')
+  @ApiBearerAuth()
   @UseGuards(AuthGuard)
   async getShareMessage(@Req() request: RequestWithAuth) {
     const BOT_TOKEN = this.configService.get<string>('BOT_TOKEN');
