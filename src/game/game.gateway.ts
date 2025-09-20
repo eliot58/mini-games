@@ -219,6 +219,65 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect, On
   }
 
   @UseGuards(WsAuthGuard)
+  @SubscribeMessage('dissolveGame')
+  async handleDissolveGameAlias(
+    @ConnectedSocket() client: SocketWithAuth
+  ) {
+    try {
+      const user = await this.prisma.user.findUnique({ where: { tgId: client.tgId } });
+      if (!user) {
+        this.logger.warn(`User not found on dissolve: tgId=${client.tgId}`);
+        return client.emit('error', { message: 'User not found' });
+      }
+
+      if (!user.current_game) {
+        return client.emit('error', { message: 'You are not in a game' });
+      }
+
+      const game = await this.prisma.game.findUnique({ where: { id: user.current_game } });
+      if (!game) {
+        this.logger.warn(`Game not found on dissolve: gameId=${user.current_game}`);
+        return client.emit('error', { message: 'Game not found' });
+      }
+
+      if (game.status !== 'waiting') {
+        return client.emit('error', { message: 'Game is not in waiting status' });
+      }
+
+      if (game.creatorId !== client.tgId) {
+        return client.emit('error', { message: 'Only creator can dissolve the game' });
+      }
+
+      const res = await this.prisma.$transaction(async (tx) => {
+        const del = await tx.game.deleteMany({
+          where: { id: game.id, status: 'waiting', creatorId: client.tgId },
+        });
+
+        if (del.count === 0) {
+          return { deleted: false };
+        }
+
+        await tx.user.updateMany({
+          where: { current_game: game.id },
+          data: { current_game: null },
+        });
+
+        return { deleted: true };
+      });
+
+      if (!res.deleted) {
+        return client.emit('error', { message: 'Game already started or was dissolved' });
+      }
+
+      this.logger.log(`Game dissolved by creator: gameId=${game.id}, creator=${client.tgId}`);
+      client.emit('gameDissolved', { gameId: game.id });
+    } catch (e) {
+      this.logger.error('Failed to dissolve waiting game', e as any);
+      client.emit('error', { message: 'Failed to dissolve game' });
+    }
+  }
+
+  @UseGuards(WsAuthGuard)
   @SubscribeMessage('joinGame')
   async handleJoinGame(
     @ConnectedSocket() client: SocketWithAuth,
@@ -322,7 +381,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect, On
       return client.emit('error', { message: 'Not your turn' });
     }
 
-    // 1) СПИСАТЬ время у текущего игрока и проверить тайм-аут
     const upd = await this.updateAndCheckTimeout({
       id: game.id,
       creatorId: game.creatorId,
