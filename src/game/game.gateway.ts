@@ -30,7 +30,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect, On
   constructor(
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
-  ) {}
+  ) { }
 
   private readonly logger = new Logger(GameGateway.name);
 
@@ -80,11 +80,24 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect, On
         return client.emit('error', { message: 'Game not found' });
       }
 
+      if (game.status === 'waiting') {
+        await this.prisma.$transaction(async (tx) => {
+
+          await tx.game.deleteMany({
+            where: { id: game.id, status: 'waiting', creatorId: client.tgId },
+          });
+
+          await tx.user.updateMany({
+            where: { current_game: game.id },
+            data: { current_game: null },
+          });
+        })
+      }
+
       if (game.status === 'started') {
         const opponentId = game.creatorId === user.tgId ? game.joinerId : game.creatorId;
         const opponentSocketId = game.creatorId === user.tgId ? game.joinerSocketId : game.creatorSocketId;
 
-        // списать время до момента дисконнекта и проверить тайм-аут
         const upd = await this.updateAndCheckTimeout({
           id: game.id,
           creatorId: game.creatorId,
